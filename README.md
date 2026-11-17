@@ -1,135 +1,232 @@
 # AI Document Processor Backend
 
-A backend service for intelligent document intake, extraction, validation, and retrieval. It accepts invoice and document uploads in multiple formats, processes them asynchronously, extracts structured data using LLM-powered parsing, validates financial correctness with Python rules, and provides searchable APIs for downstream review and correction workflows.
+A production-oriented backend for document intelligence, document ingestion, AI-powered extraction, validation, and retrieval. The service accepts invoices and other structured documents in multiple formats, extracts raw text using OCR and parser pipelines, structures the data with LLM-based extraction, validates financial correctness using deterministic Python checks, and exposes a REST API for review, correction, and search workflows.
 
-## Overview
+## Purpose
 
-This project is designed for document-heavy workflows where accuracy and traceability matter. The backend handles:
+This project is designed for document-heavy business workflows where quality, traceability, and operational reliability matter. The core backend responsibilities are:
 
-- File ingestion for PDF, image, spreadsheet, text, and document exports
-- OCR and text extraction from scanned or semi-structured sources
-- Structured invoice extraction using an LLM
-- Financial validation and duplicate detection
-- Search and comparison across stored document data
-- Human correction workflows with re-validation
-- Background pipeline execution for long-running tasks
+- Ingesting uploaded files from the frontend or external clients
+- Persisting metadata and storage artifacts while tracking processing status
+- Detecting document type and routing to the appropriate extraction pipeline
+- Extracting readable text from PDFs, scanned pages, spreadsheets, images, and text files
+- Running LLM-based structural extraction to convert raw content into invoice data
+- Validating totals, dates, and extracted values with Python logic
+- Recording validation issues and processing history for later review
+- Enabling correction workflows and document-level comparisons
+- Supporting semantic and keyword search on extracted document content
 
-The system is implemented primarily in FastAPI and uses Celery + Redis to offload processing from the request thread.
+## System design
 
-## Core backend capabilities
-
-### 1. Document ingestion
-- Upload documents through the API
-- Store files in a persistent storage directory
-- Track document metadata and processing status
-- Reject unsupported or oversized files with structured validation
-
-### 2. Extraction pipeline
-- Detect file type via processor layer
-- Extract raw content from PDF, image, CSV, Excel, or text inputs
-- Normalize extracted content before LLM parsing
-- Convert unstructured content into structured invoice entities and line items
-
-### 3. AI-assisted data extraction
-- Uses LLM prompting to convert text into structured extraction objects
-- Enforces schema-based output expectations
-- Keeps raw extraction payloads available for diagnostics and auditability
-
-### 4. Validation and quality assurance
-- Performs arithmetic checks using Decimal-based logic to avoid floating-point precision issues
-- Detects duplicate or near-duplicate invoices using normalized comparison rules
-- Logs validation errors with severity levels and reconciliation statuses
-
-### 5. Search and review
-- Query documents and invoice records through REST endpoints
-- Search by keyword and semantic relevance
-- Compare related documents or extracted invoice records
-- Allow review and correction of extracted values by users
-
-## Backend architecture
-
-The backend follows a modular service-oriented structure:
+The backend is implemented as a layered FastAPI application that separates API concerns, domain logic, processing, validation, and worker execution.
 
 ```text
-API Layer
-  -> Upload / Document / Search / Correction endpoints
-      -> Business logic and DB access
-          -> Processor layer (PDF, image, Excel, text, etc.)
-              -> AI extraction service
-                  -> Validation layer
-                      -> Database persistence
-                          -> Celery task orchestration
+Client / Frontend
+      |
+      v
+FastAPI API Layer
+      |
+      +--> Upload endpoints
+      +--> Document retrieval and status endpoints
+      +--> Search and comparison endpoints
+      +--> Correction and reprocessing endpoints
+      |
+      v
+Application Services / Business Logic
+      |
+      +--> Document creation + metadata persistence
+      +--> File storage and validation
+      +--> Extraction orchestration
+      +--> Validation and duplicate checks
+      |
+      v
+Processing Layer
+      +--> base document detection
+      +--> PDF processor
+      +--> image processor
+      +--> Excel/CSV processor
+      +--> text processor
+      |
+      v
+AI Layer
+      +--> prompt construction
+      +--> LLM extraction
+      +--> structured schema validation
+      +--> embedding generation support
+      |
+      v
+Persistence Layer
+      +--> SQLAlchemy models
+      +--> SQLite for local/dev
+      +--> PostgreSQL-ready configuration
+      |
+      v
+Worker Layer
+      +--> Celery task queue
+      +--> Redis broker
+      +--> background document processing
 ```
 
-### Request lifecycle
+## Core processing pipeline
 
-1. Client uploads a file to the FastAPI app.
-2. The file is saved to local storage and a document record is created.
-3. A Celery task is queued for asynchronous processing.
-4. The worker detects the file type and extracts raw text or OCR output.
-5. The LLM extracts invoice data into a structured JSON schema.
-6. Validation rules verify totals, fields, and duplicates.
-7. The results are persisted and exposed through API endpoints.
-8. Frontend or review tools can patch values and trigger re-validation.
+The backend follows a deterministic extraction pipeline designed for reliability and traceability:
 
-## Tech stack
+1. Upload the file through the FastAPI API.
+2. Validate filename, extension, and file size.
+3. Save the file into a per-document storage directory.
+4. Create a `Document` record with metadata and initial status.
+5. Enqueue a Celery task for asynchronous processing.
+6. Worker resolves the file type and selects the appropriate processor.
+7. Extract raw content using PDF text extraction, OCR, or tabular parsers.
+8. Build a prompt with extracted text and required schema constraints.
+9. Call the LLM to return structured invoice data in JSON form.
+10. Persist extracted invoice fields and line items to the database.
+11. Apply validation checks for totals, missing fields, duplicates, and anomalies.
+12. Update document status from `processing` to `completed` or `failed`.
+13. Expose the result through search and document detail endpoints.
 
-### Runtime and API
+## Architectural principles
+
+### 1. Async-first execution model
+Long-running processing is decoupled from the HTTP request lifecycle. Uploads return immediately while the Celery worker handles OCR, parsing, and model inference.
+
+### 2. Deterministic validation over model trust
+The model is treated as a generator of candidate structured data, not as the final authority. Financial logic is enforced in Python using explicit checks and decimal-safe calculations.
+
+### 3. Schema-driven extraction
+Structured outputs are generated against known invoice-style schemas. This reduces uncontrolled or malformed output and makes downstream validation easier.
+
+### 4. Auditability
+The system stores:
+- source file location
+- extracted text
+- raw extraction JSON
+- validation errors
+- processing history
+- correction metadata
+
+This makes the pipeline reviewable and debuggable.
+
+### 5. Human-in-the-loop correction
+Users can patch extracted values via API endpoints, re-run validation, and ensure the extracted output aligns with real source documents.
+
+## Technology stack
+
+### API layer
 - FastAPI
-- Pydantic + Pydantic Settings
-- SQLAlchemy 2.0
+- Pydantic v2
+- Pydantic Settings
 - Uvicorn
+
+### Persistence
+- SQLAlchemy 2.0
+- SQLite for local development and tests
+- PostgreSQL-ready design for production workloads
+- JSON storage patterns suited for structured extraction payloads
 
 ### Background processing
 - Celery
 - Redis
-- Async task execution for long-running extraction and validation work
+- Eager fallback for local development environments when a broker is unavailable
 
-### Document processing
-- PyMuPDF for PDF handling
-- Pillow for image processing
-- Tesseract OCR
-- pandas for tabular document parsing
-- openpyxl, xlrd, python-docx for Office and spreadsheet files
+### Document ingestion and parsing
+- PyMuPDF for PDF text extraction
+- Pillow for image handling
+- Tesseract OCR for scanned and image-based documents
+- pandas for CSV and Excel parsing
+- openpyxl and xlrd for spreadsheet formats
+- python-docx for DOCX input
 
-### AI and embeddings
-- OpenAI API
-- LLM-based extraction workflows
-- Embedding generation support for search and semantic retrieval
+### AI and retrieval
+- OpenAI API support
+- Gemini API support
+- LLM-driven extraction and structured output parsing
+- Embedding-ready architecture for semantic retrieval
 
-### Storage and persistence
-- SQLite by default for local development
-- PostgreSQL-ready configuration for production deployments
-- pgvector-compatible deployment pattern for future vector search
+## Data model
 
-## Repository structure
+The backend stores a document-centric data model with supporting entities for extraction, validation, and history.
+
+### Document
+Represents the uploaded file and processing lifecycle:
+- id
+- filename
+- content_type
+- file_size
+- storage_path
+- extracted_text
+- status
+- error_message
+- created_at
+- updated_at
+
+### ExtractedInvoice
+Stores the normalized structured invoice result:
+- document_id
+- document_type
+- invoice_number
+- invoice_date
+- supplier_name
+- customer_name
+- merchant_name
+- transaction_date
+- payment_method
+- currency
+- subtotal
+- tax
+- total
+- raw_extraction
+- corrected_by_user
+
+### LineItem
+Represents the invoice line entries extracted from the document.
+
+### ValidationError
+Tracks validation issues by severity and status:
+- error
+- warning
+- info
+
+### ProcessingHistory
+Captures stage-by-stage execution details for auditing.
+
+### DocumentEmbedding
+Supports embedding-based features and future semantic search expansion.
+
+## Repository layout
 
 ```text
 backend/
   app/
     ai/
+      __init__.py
       embeddings.py
       extraction.py
       prompts.py
     api/
+      __init__.py
       corrections.py
       documents.py
       search.py
       serializers.py
       uploads.py
     processors/
+      __init__.py
       base.py
       excel_processor.py
       image_processor.py
       pdf_processor.py
       text_processor.py
     validation/
+      __init__.py
       cross_verify.py
       duplicate.py
       financial.py
     workers/
+      __init__.py
       celery_app.py
       pipeline.py
+    __init__.py
     config.py
     database.py
     main.py
@@ -146,9 +243,59 @@ backend/
     test_prompts.py
 ```
 
+## Module responsibilities
+
+### app.main
+Initializes the FastAPI application, registers API routers, applies CORS configuration, and creates database tables at startup.
+
+### app.config
+Loads environment configuration from `.env` and defines application settings like database URL, Redis URL, model names, storage path, and file limits.
+
+### app.database
+Creates the SQLAlchemy engine and session factory, and exposes the database dependency used across routes.
+
+### app.api.uploads
+Handles file upload validation and dispatches jobs to the processing queue.
+
+### app.api.documents
+Provides document listing, detail retrieval, verification, and reprocessing endpoints.
+
+### app.api.search
+Exposes keyword and semantic search routes over indexed or persisted document metadata.
+
+### app.api.corrections
+Implements invoice correction and comparison logic for user-driven review workflows.
+
+### app.processors
+Contains format-specific parsing logic:
+- PDF parsing with text extraction and OCR fallback
+- image OCR pipelines
+- spreadsheet extraction with pandas
+- CSV, TXT, and DOCX parsing
+
+### app.ai.extraction
+Handles the LLM extraction calls and schema parsing of invoice data.
+
+### app.ai.prompts
+Defines prompt templates used to instruct the model for structured extraction.
+
+### app.validation.financial
+Runs deterministic arithmetic validations to check totals, taxes, and line-level consistency.
+
+### app.validation.duplicate
+Flags duplicate or near-duplicate documents using normalized invoice attributes.
+
+### app.validation.cross_verify
+Compares related documents and extracted records for discrepancy analysis.
+
+### app.workers.pipeline
+Coordinates the asynchronous document-processing job chain.
+
 ## Configuration
 
-The backend reads configuration from environment variables using Pydantic settings. Key configuration values include:
+The application uses environment-based settings through `pydantic-settings`.
+
+### Example configuration
 
 ```env
 DATABASE_URL=sqlite:///./docintel.db
@@ -159,44 +306,57 @@ OPENAI_MODEL=gpt-4o-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 GEMINI_API_KEY=your_gemini_key
 GEMINI_MODEL=gemini-2.0-flash
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 STORAGE_DIR=./storage
 MAX_UPLOAD_MB=50
 ```
 
-### Environment notes
-- SQLite is suitable for local development and tests.
-- PostgreSQL is recommended for production or multi-user deployments.
-- Redis must be available for Celery worker processing.
+### Configuration notes
+- SQLite is adequate for local development and automated testing.
+- PostgreSQL is the preferred production database for concurrency and reliability.
+- Redis is required for Celery worker orchestration.
+- OCR and model provider keys must be configured for production document processing.
 
-## Getting started
+## Local development setup
 
 ### Prerequisites
 - Python 3.11+
-- Redis server
+- Redis server running locally
 - Optional: PostgreSQL
 - Optional: Tesseract OCR installed on the system
-- Optional: OpenAI or Gemini API credentials
+- API credentials for OpenAI or Gemini
 
-### Install backend dependencies
+### 1. Create a virtual environment
 
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
+# Windows:
+# .venv\Scripts\activate
+```
+
+### 2. Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### Run the backend locally
+### 3. Configure environment variables
 
 ```bash
-cd backend
 export DATABASE_URL=sqlite:///./docintel.db
 export REDIS_URL=redis://localhost:6379/0
 export OPENAI_API_KEY=your_key
+```
+
+### 4. Start the API
+
+```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Run the Celery worker
+### 5. Start the worker
 
 In a separate terminal:
 
@@ -205,7 +365,7 @@ cd backend
 celery -A app.workers.celery_app worker --loglevel=info
 ```
 
-### Run with Docker
+### 6. Start with Docker
 
 From the project root:
 
@@ -213,100 +373,95 @@ From the project root:
 docker compose up --build
 ```
 
-This starts the application stack with the backend and related services configured for local development.
+## API contract
 
-## API overview
-
-The API is exposed under the `/api` namespace and is documented interactively at:
+API routes are grouped under the `/api` namespace and are documented via FastAPI OpenAPI at:
 
 ```text
 http://localhost:8000/docs
 ```
 
-### Core endpoints
+### Primary endpoints
 
-| Method | Endpoint | Description |
+| Method | Endpoint | Responsibility |
 |---|---|---|
-| GET | `/api/health` | Health check for the backend service |
-| POST | `/api/uploads` | Upload a file for processing |
-| GET | `/api/documents` | List processed and pending documents |
-| GET | `/api/documents/{id}` | Get detailed document extraction and validation information |
-| POST | `/api/documents/{id}/reprocess` | Re-run processing for a document |
-| GET | `/api/search?q=` | Query stored records by keyword |
-| GET | `/api/search/semantic?q=` | Search by semantic similarity |
-| PATCH | `/api/invoices/{id}` | Update extracted values and re-validate |
-| POST | `/api/documents/{id}/verify/{other_id}` | Compare document contents across records |
-| GET | `/api/invoices/{a}/compare/{b}` | Compare extracted invoice-level attributes |
+| GET | `/api/health` | Service health check |
+| POST | `/api/uploads` | Upload a file and start processing |
+| GET | `/api/documents` | List recent documents |
+| GET | `/api/documents/{document_id}` | Fetch a full document detail view |
+| POST | `/api/documents/{document_id}/reprocess` | Trigger reprocessing for a document |
+| GET | `/api/search?q=` | Search documents by keyword |
+| GET | `/api/search/semantic?q=` | Search by semantic relevance |
+| PATCH | `/api/invoices/{id}` | Correct extracted invoice fields and revalidate |
+| POST | `/api/documents/{document_id}/verify/{other_document_id}` | Compare two extracted records |
+| GET | `/api/invoices/{a}/compare/{b}` | Compare invoice-level relationships |
 
-## Key backend modules
+## Example upload flow
 
-### app.main
-- Initializes the FastAPI application
-- Configures CORS for the frontend origin
-- Registers routers
-- Creates database tables at startup
-- Exposes the health endpoint
+```bash
+curl -X POST "http://localhost:8000/api/uploads" \
+  -H "accept: application/json" \
+  -F "file=@sample_invoice.pdf"
+```
 
-### app.api
-- Contains endpoint logic for uploads, document retrieval, corrections, and search
-- Handles HTTP validation and response serialization
+Response includes a document record with an ID and status. The processing then runs asynchronously in the Celery worker.
 
-### app.processors
-- Detects and processes document formats
-- Extracts raw data from PDFs, images, CSVs, Excel files, and text files
-- Encapsulates source-specific parsing behavior
+## Validation and quality assurance
 
-### app.ai
-- Centralizes extraction prompts and response parsing
-- Manages LLM calls and schema validation for structured output
-- Supports embedding generation and semantic retrieval workflows
+The validation layer tries to ensure result correctness without depending entirely on the LLM output.
 
-### app.validation
-- Performs financial validation checks
-- Detects duplicates and compare-style anomalies
-- Produces warnings/errors on extracted data quality issues
+### Financial validation
+- checks subtotal, tax, and total consistency
+- handles currency and numeric precision carefully
+- catches arithmetic anomalies before exposing the result
 
-### app.workers
-- Defines the Celery app and task pipeline
-- Manages asynchronous execution for file processing and validation
+### Duplicate detection
+- normalizes invoice identifiers and supplier metadata
+- compares totals, dates, and supplier attributes
+- flags documents that appear to be repeated or near-duplicates
+
+### Error logging
+Validation issues are recorded as structured `ValidationError` entries with severity and resolution state.
 
 ## Testing
 
-This project includes backend unit and integration tests under the `tests/` folder.
+The project includes backend tests under the `tests/` directory.
 
-Run the test suite with:
+Run the suite:
 
 ```bash
 cd backend
 pytest
 ```
 
-Recommended test coverage areas:
-- API behavior and document status flows
-- Duplicate detection logic
-- Financial validation calculations
-- Extraction schema integrity
-- OCR and processor edge cases
-- Prompt and LLM integration reliability
+Recommended validation areas:
+- API endpoint behavior
+- document lifecycle transitions
+- financial arithmetic checks
+- duplicate detection logic
+- OCR and processor parsing correctness
+- LLM extraction schema reliability
+- prompt and output consistency
 
 ## Operational notes
 
-- Document processing is intentionally asynchronous to avoid blocking API requests.
-- Failed tasks are surfaced through document status and history metadata.
-- Validation rules are designed to be explicit and deterministic rather than relying on model judgment alone.
-- The extraction layer is schema-driven, which reduces malformed or unstable data output.
+- The system uses asynchronous processing to keep HTTP responses fast.
+- Files are stored on disk per document to simplify debugging and recovery.
+- Failed extraction flows mark documents as failed with an error message and processing history.
+- The backend is designed to support reprocessing after corrected extraction or infrastructure recovery.
+- The architecture supports future upgrades such as vector search, better document ranking, and broader document type coverage.
 
-## Recommended next steps
+## Production-minded considerations
 
-- Switch development database to PostgreSQL for production-like validation
-- Add container health checks and monitoring for Redis/Celery workers
-- Expand semantic search with persistent vector storage and indexing
-- Harden document security checks, rate limits, and background retries
-- Add observability logs and task metrics for auditability
+Before deployment to production, the team should consider:
 
-## License
-
-This project is intended for internal or team-based document processing workflows. Update licensing terms according to your organization or client requirements before public distribution.
+- PostgreSQL instead of SQLite for multi-user workloads
+- Redis and Celery monitoring and queue observability
+- rate limiting and authentication for upload endpoints
+- secure file handling and artifact retention policies
+- retry strategies for model or OCR failures
+- structured logging and request correlation IDs
+- document processing quotas and concurrency limits
 
 ## Documentation
 
@@ -315,3 +470,7 @@ Additional project documentation is available in:
 - docs/architecture.md
 - docs/evaluation.md
 - docs/ai-disclosure.md
+
+## License
+
+This project is intended for internal or team-based document processing workflows. Update licensing and distribution terms before public release or commercial reuse.
