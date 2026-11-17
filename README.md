@@ -7,7 +7,7 @@ Upload invoices and receipts (PDF, images, Excel, CSV, TXT/MD, DOCX) in bulk →
 - **Backend**: FastAPI, SQLAlchemy, Celery + Redis, OpenAI API, PyMuPDF, Tesseract OCR, pandas
 - **Frontend**: Next.js, Tailwind CSS
 - **Database**: PostgreSQL (pgvector image; SQLite fallback for tests)
-- **Infra**: Docker Compose
+- **Infra**: Docker Compose.
 
 ## Quick start
 
